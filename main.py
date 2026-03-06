@@ -13,7 +13,8 @@ import invest
 
 app = Flask(__name__)
 # Adding CORS support and allow cross-origin requests
-CORS(app, origins=["http://localhost:5173"])
+CORS(app, resources={r"/*": {"origins": "*"}})
+
 
 # We need a temp folder to save uploaded files before pandas reads them
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
