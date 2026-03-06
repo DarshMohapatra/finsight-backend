@@ -16,8 +16,8 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 
-# We need a temp folder to save uploaded files before pandas reads them
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+# Vercel's filesystem is read-only except /tmp
+UPLOAD_FOLDER = '/tmp/uploads' if os.environ.get('VERCEL') else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
