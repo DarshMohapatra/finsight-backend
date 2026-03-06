@@ -81,7 +81,14 @@ def _save_statements(user_id, records, filename):
     """
     Save analyzed transactions to Supabase tagged with filename.
     Full row stored in metadata JSONB so load can reconstruct exactly.
+    Deletes any existing rows for the same user+filename first to prevent duplicates.
     """
+    # Delete old rows for this file so re-uploads don't double the data
+    httpx.delete(
+        f"{REST}/transactions", headers=HEADERS,
+        params={"user_id": f"eq.{user_id}", "metadata->>_source_file": f"eq.{filename}"}
+    )
+
     saved = 0
     errors = []
     for i in range(0, len(records), 100):
