@@ -70,11 +70,12 @@ def _headers(token):
 
 def scan_for_statements(access_token, max_results=40, months=6):
     """
-    Search Gmail for emails with bank statement PDFs.
-    Two-pass strategy:
+    Search Gmail for emails with PDF attachments that could be bank statements.
+    Three-pass strategy (deduplicated by message ID):
       1) Emails from known bank sender domains with PDF attachments
-      2) Any email with PDF attachments whose filenames look like statements
-    Results are deduplicated by message ID.
+      2) Any email with PDF attachment (catches self-sent, forwarded statements)
+    After fetching metadata, we keep emails whose PDF filenames look like statements
+    or come from known banks.
     """
     from datetime import datetime, timedelta
 
@@ -85,11 +86,8 @@ def scan_for_statements(access_token, max_results=40, months=6):
     sender_q = " OR ".join([f"from:{s}" for s in BANK_SENDERS[:15]])
     query1   = f"({sender_q}) has:attachment filename:pdf after:{after_date}"
 
-    # -- Pass 2: any email with statement-like PDF filenames --
-    name_keywords = ["statement", "account", "txn", "transaction", "e-statement",
-                     "estatement", "bankstatement", "credit_card", "creditcard"]
-    name_q  = " OR ".join([f"filename:{kw}" for kw in name_keywords])
-    query2  = f"({name_q}) has:attachment filename:pdf after:{after_date}"
+    # -- Pass 2: ANY email with a PDF attachment (broad catch-all) --
+    query2   = f"has:attachment filename:pdf after:{after_date}"
 
     seen_ids = set()
     all_refs = []
@@ -111,9 +109,9 @@ def scan_for_statements(access_token, max_results=40, months=6):
     if not all_refs:
         return {"success": True, "emails": [], "count": 0}
 
-    # Fetch metadata for up to 25 messages
+    # Fetch metadata for up to 30 messages
     emails = []
-    for ref in all_refs[:25]:
+    for ref in all_refs[:30]:
         meta = _get_message_meta(ref["id"], h)
         if meta:
             emails.append(meta)
