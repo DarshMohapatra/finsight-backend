@@ -119,18 +119,13 @@ def scan_for_statements(access_token, max_results=40, months=6):
 
     # Fetch metadata for up to 30 messages
     emails = []
-    skipped = []
     for ref in all_refs[:30]:
         meta = _get_message_meta(ref["id"], h)
         if meta:
             emails.append(meta)
-        else:
-            skipped.append(ref["id"])
-
-    debug_info.append({"refs_found": len(all_refs), "meta_ok": len(emails), "meta_skipped": len(skipped), "skipped_ids": skipped[:5]})
 
     emails.sort(key=lambda e: e.get("date", ""), reverse=True)
-    return {"success": True, "emails": emails, "count": len(emails), "debug": debug_info}
+    return {"success": True, "emails": emails, "count": len(emails)}
 
 
 def _get_message_meta(message_id, headers):
@@ -154,6 +149,14 @@ def _get_message_meta(message_id, headers):
         return None  # skip if no PDF found
 
     sender_raw  = hmap.get("From", "")
+    subject     = hmap.get("Subject", "")
+    is_from_bank = any(d in sender_raw.lower() for d in BANK_DISPLAY)
+
+    # If not from a known bank, check if PDF filenames or subject look like statements
+    if not is_from_bank:
+        if not _looks_like_statement(attachments, subject):
+            return None  # skip irrelevant PDFs (receipts, prescriptions, etc.)
+
     bank_name   = _resolve_bank_name(sender_raw)
 
     # If sender isn't a known bank, try to detect bank from attachment filenames
@@ -191,6 +194,24 @@ def _walk_parts(part, message_id, result):
 
     for sub in part.get("parts", []):
         _walk_parts(sub, message_id, result)
+
+
+STATEMENT_KEYWORDS = [
+    "statement", "account", "txn", "transaction", "e-statement",
+    "estatement", "bankstatement", "credit_card", "creditcard",
+    "bank", "savings", "current_account", "salary", "passbook",
+    "hdfc", "icici", "sbi", "axis", "kotak", "indusind", "idfc",
+    "rbl", "canara", "pnb", "baroda", "citi", "chase", "wells",
+    "barclays", "hsbc", "natwest", "lloyds", "anz", "commbank",
+]
+
+
+def _looks_like_statement(attachments, subject):
+    """Check if any attachment filename or the email subject suggests a bank statement."""
+    text = subject.lower()
+    for att in attachments:
+        text += " " + att.get("filename", "").lower()
+    return any(kw in text for kw in STATEMENT_KEYWORDS)
 
 
 FILENAME_BANK_HINTS = {
