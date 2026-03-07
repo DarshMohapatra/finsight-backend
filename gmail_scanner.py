@@ -119,13 +119,18 @@ def scan_for_statements(access_token, max_results=40, months=6):
 
     # Fetch metadata for up to 30 messages
     emails = []
+    skipped = []
     for ref in all_refs[:30]:
         meta = _get_message_meta(ref["id"], h)
         if meta:
             emails.append(meta)
+        else:
+            skipped.append(ref["id"])
+
+    debug_info.append({"refs_found": len(all_refs), "meta_ok": len(emails), "meta_skipped": len(skipped), "skipped_ids": skipped[:5]})
 
     emails.sort(key=lambda e: e.get("date", ""), reverse=True)
-    return {"success": True, "emails": emails, "count": len(emails)}
+    return {"success": True, "emails": emails, "count": len(emails), "debug": debug_info}
 
 
 def _get_message_meta(message_id, headers):
@@ -133,17 +138,15 @@ def _get_message_meta(message_id, headers):
     r = httpx.get(
         f"{GMAIL_API}/users/me/messages/{message_id}",
         headers=headers,
-        params={
-            "format": "metadata",
-            "metadataHeaders": ["From", "Subject", "Date"],
-        },
+        params={"format": "full"},
         timeout=15,
     )
     if r.status_code != 200:
         return None
 
     data        = r.json()
-    hmap        = {h["name"]: h["value"] for h in data.get("payload", {}).get("headers", [])}
+    all_headers = data.get("payload", {}).get("headers", [])
+    hmap        = {h["name"]: h["value"] for h in all_headers}
     attachments = []
     _walk_parts(data.get("payload", {}), message_id, attachments)
 
