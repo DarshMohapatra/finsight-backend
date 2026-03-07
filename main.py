@@ -10,6 +10,9 @@ from ai_advisor import generate_chat_response
 from forecaster import generate_forecast
 import smartcash
 import invest
+import gmail_auth
+import gmail_scanner
+import gmail_fetcher
 
 app = Flask(__name__)
 # Adding CORS support and allow cross-origin requests
