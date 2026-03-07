@@ -22,35 +22,43 @@ def _cfmt(x, currency="IN"):
     elif raw >= cc["k_div"]:    return sym + str(round(x/cc["k_div"], 1)) + cc["k"]
     else:                       return sym + str(round(x, 0))[:-2]
 
-def build_context(df, currency="IN"):
+def build_context(df, currency="IN", profile=None):
     cc = CURRENCY_CONFIG.get(currency, CURRENCY_CONFIG["IN"])
     df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
     df["MONTH"] = df["DATE"].dt.to_period("M")
-    
+
     raw_total = df["WITHDRAWAL AMT"].sum()
     if raw_total >= cc["huge_div"]:   scale, slbl = cc["huge_div"], cc["huge"]
     elif raw_total >= cc["big_div"]:  scale, slbl = cc["big_div"], cc["big"]
     else:                             scale, slbl = 1, cc["code"]
-    
+
     total_wd = round(df["WITHDRAWAL AMT"].sum() / scale, 2)
     total_dep = round(df["DEPOSIT AMT"].sum() / scale, 2)
     avg_monthly = round(df.groupby("MONTH")["WITHDRAWAL AMT"].sum().mean() / scale, 2)
-    
+
     anomalies = int(df["IS_ANOMALY"].sum()) if "IS_ANOMALY" in df.columns else 0
     top_cat = df["CATEGORY"].value_counts().index[0] if len(df) > 0 else "Unknown"
-    
+
     monthly_t = df.groupby("MONTH")["WITHDRAWAL AMT"].sum()
     max_month = str(monthly_t.idxmax()) if len(monthly_t) > 0 else "Unknown"
     min_month = str(monthly_t.idxmin()) if len(monthly_t) > 0 else "Unknown"
-    
+
     top5 = df.nlargest(5, "WITHDRAWAL AMT")
     top5_lines = [f"  - {row['DATE'].strftime('%d %b %Y')} | {str(row['TRANSACTION DETAILS'])[:40]} | {_cfmt(row['WITHDRAWAL AMT'], currency)}" for _, row in top5.iterrows()]
-    
+
     trend_parts = [f"{str(mo)}: {round(val/scale, 2)}" for mo, val in monthly_t.items()]
     cat_parts = [f"  - {c}: {round(a/scale, 2)} {slbl}" for c, a in df.groupby("CATEGORY")["WITHDRAWAL AMT"].sum().sort_values(ascending=False).items()]
-    
+
     flow = "SURPLUS" if total_dep > total_wd else "DEFICIT"
-    
+
+    # Savings rate
+    savings_rate = round((total_dep - total_wd) / total_dep * 100, 1) if total_dep > 0 else 0
+
+    # Average transaction size
+    wd_txns = df[df["WITHDRAWAL AMT"] > 0]
+    avg_txn = round((wd_txns["WITHDRAWAL AMT"].sum() / len(wd_txns)) / scale, 2) if len(wd_txns) > 0 else 0
+    unique_cats = df["CATEGORY"].nunique()
+
     ctx = "You are FinSight, a strict personal AI financial advisor built into a bank statement analysis app.\n"
     ctx += "STRICT RULES YOU MUST ALWAYS FOLLOW:\n"
     ctx += "1. You ONLY discuss personal finance topics: spending, saving, budgeting, investing, banking, credit cards, loans, taxes, insurance, and the user's bank statement data.\n"
@@ -59,17 +67,29 @@ def build_context(df, currency="IN"):
     ctx += "4. For off-topic questions reply ONLY with: 'I'm FinSight, your personal financial advisor. I can only help with finance-related questions like spending analysis, budgeting, savings goals, or investment advice. How can I help with your finances?'\n"
     ctx += "5. Do NOT provide prices, reviews, recommendations, or information about products, vehicles, gadgets, real estate listings, or any non-financial service.\n"
     ctx += "6. You MAY discuss the financial ASPECT of a purchase (e.g., 'Can I afford a car?' based on their data) but NEVER the product itself (e.g., car specs, prices, models).\n\n"
+
+    # User profile
+    if profile:
+        ctx += "USER PROFILE:\n"
+        if profile.get("name"):   ctx += f"  Name: {profile['name']}\n"
+        if profile.get("age"):    ctx += f"  Age: {profile['age']}\n"
+        if profile.get("email"):  ctx += f"  Email: {profile['email']}\n"
+        ctx += "\n"
+
     ctx += f"REAL USER BANK DATA (all amounts in {slbl}):\n"
     ctx += f"Date Range: {df['DATE'].min().strftime('%d %b %Y')} to {df['DATE'].max().strftime('%d %b %Y')}\n"
     ctx += f"Total Transactions: {len(df)}\n"
     ctx += f"Total Withdrawals: {total_wd} {slbl}\n"
     ctx += f"Total Deposits: {total_dep} {slbl}\n"
     ctx += f"Net Flow: {round(total_dep-total_wd, 2)} {slbl} ({flow})\n"
+    ctx += f"Savings Rate: {savings_rate}%\n"
     ctx += f"Avg Monthly Spending: {avg_monthly} {slbl}\n"
+    ctx += f"Avg Transaction Size: {avg_txn} {slbl}\n"
+    ctx += f"Unique Categories: {unique_cats}\n"
     ctx += f"Highest Spending Month: {max_month}\n"
     ctx += f"Lowest Spending Month: {min_month}\n"
     ctx += f"Anomalies Flagged: {anomalies}\n"
-    
+
     if "ALERT_LEVEL" in df.columns:
         flagged = df[df["ALERT_LEVEL"] > 0].sort_values("ALERT_LEVEL", ascending=False)
         if len(flagged) > 0:
@@ -79,36 +99,71 @@ def build_context(df, currency="IN"):
                 reason = frow.get("ALERT_REASON", "Unknown")
                 flag_lines.append(f"  - [{lvl}] {frow['DATE'].strftime('%d %b %Y')} | {str(frow['TRANSACTION DETAILS'])[:40]} | {_cfmt(frow['WITHDRAWAL AMT'], currency)} | Reason: {reason}")
             ctx += "Flagged Transactions (suspicious):\n" + "\n".join(flag_lines) + "\n"
-            
+
     ctx += f"Top Category: {top_cat}\n"
     ctx += "Monthly Trend:\n | " + " | ".join(trend_parts) + "\n"
     ctx += "Top 5 Largest Withdrawals:\n" + "\n".join(top5_lines) + "\n"
     ctx += "Category Breakdown:\n" + "\n".join(cat_parts) + "\n"
-    ctx += "IMPORTANT: Use ONLY this data. Always give specific numbers. Be concise, friendly and actionable. Format responses with Markdown headers and bullet points.\n"
+
+    # 3-month rolling trend comparison
+    if len(monthly_t) >= 3:
+        last3 = monthly_t.tail(3)
+        ctx += "\nLAST 3 MONTHS TREND:\n"
+        for mo, val in last3.items():
+            ctx += f"  - {str(mo)}: {round(val/scale, 2)} {slbl}\n"
+        if len(monthly_t) >= 6:
+            prev3 = monthly_t.iloc[-6:-3]
+            pct_change = round((last3.sum() - prev3.sum()) / prev3.sum() * 100, 1) if prev3.sum() > 0 else 0
+            direction = "UP" if pct_change > 0 else "DOWN"
+            ctx += f"  vs Previous 3 months: {direction} {abs(pct_change)}%\n"
+
+    # Per-statement / per-bank analysis
+    if "_source_file" in df.columns:
+        sources = df["_source_file"].dropna().unique()
+        if len(sources) > 1:
+            ctx += f"\nMULTIPLE STATEMENTS LOADED ({len(sources)} files) — user may ask to compare:\n"
+            for src in sources:
+                src_df = df[df["_source_file"] == src]
+                src_spent = round(src_df["WITHDRAWAL AMT"].sum() / scale, 2)
+                src_recv = round(src_df["DEPOSIT AMT"].sum() / scale, 2)
+                src_months = src_df["MONTH"].nunique()
+                src_top_cat = src_df[src_df["WITHDRAWAL AMT"] > 0]["CATEGORY"].value_counts().index[0] if len(src_df[src_df["WITHDRAWAL AMT"] > 0]) > 0 else "N/A"
+                ctx += f"  - {src}: {len(src_df)} txns, {src_months} month(s), Spent {src_spent} {slbl}, Received {src_recv} {slbl}, Top: {src_top_cat}\n"
+
+    # Category-wise monthly trend (top 5 categories)
+    top5_cats = df[df["WITHDRAWAL AMT"] > 0].groupby("CATEGORY")["WITHDRAWAL AMT"].sum().nlargest(5).index.tolist()
+    if top5_cats and len(monthly_t) >= 2:
+        ctx += "\nTOP CATEGORY MONTHLY TRENDS:\n"
+        for cat in top5_cats:
+            cat_monthly = df[df["CATEGORY"] == cat].groupby("MONTH")["WITHDRAWAL AMT"].sum()
+            parts = [f"{str(mo)}: {round(v/scale, 2)}" for mo, v in cat_monthly.items()]
+            ctx += f"  {cat}: {' | '.join(parts)}\n"
+
+    ctx += "\nIMPORTANT: Use ONLY this data. Always give specific numbers. Be concise, friendly and actionable. Format responses with Markdown headers and bullet points.\n"
+    ctx += "You can answer questions about: spending patterns, category analysis, monthly trends, comparing multiple statements, savings rate, anomalies, budget advice, and the user's financial profile.\n"
     ctx += "REMINDER: You are STRICTLY a financial advisor. REFUSE all non-finance questions."
-    
+
     return ctx
 
-def generate_chat_response(transactions, history, new_message, currency="IN"):
+def generate_chat_response(transactions, history, new_message, currency="IN", profile=None):
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         return {"error": "GROQ_API_KEY environment variable not set."}
-        
+
     client = Groq(api_key=api_key)
     df = pd.DataFrame(transactions)
-    
-    system_context = build_context(df, currency)
-    
+
+    system_context = build_context(df, currency, profile)
+
     messages = [{"role": "system", "content": system_context}]
-    
-    # Filter the incoming history to ensure roles are correct
-    for msg in history[-10:]: # Keep last 10 turns
+
+    for msg in history[-10:]:
         role = msg.get("role")
         if role in ["user", "assistant"]:
             messages.append({"role": role, "content": msg["content"]})
-            
+
     messages.append({"role": "user", "content": new_message})
-    
+
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",

@@ -156,3 +156,35 @@ def _delete_account(user_id):
     r = httpx.delete(f"{REST}/users", headers=HEADERS,
                      params={"id": f"eq.{user_id}"})
     return {"success": r.status_code in (200, 204)}
+
+
+# ── SAVED CARDS ──────────────────────────────────────────────────
+def _save_card(user_id, card_data):
+    payload = {
+        "user_id":     user_id,
+        "card_id":     card_data.get("card_id", ""),
+        "card_number": card_data.get("card_number", ""),
+        "nickname":    card_data.get("nickname", ""),
+    }
+    r = httpx.post(f"{REST}/saved_cards", headers=HEADERS, json=payload)
+    if r.status_code in (200, 201):
+        return {"success": True, "card": r.json()[0]}
+    return {"success": False, "error": f"Failed to save card: {r.text}"}
+
+
+def _load_cards(user_id):
+    r = httpx.get(
+        f"{REST}/saved_cards", headers=HEADERS,
+        params={"user_id": f"eq.{user_id}", "select": "*", "order": "created_at.desc"}
+    )
+    if r.status_code == 200:
+        return {"success": True, "cards": r.json()}
+    return {"success": True, "cards": []}
+
+
+def _delete_card(user_id, card_db_id):
+    r = httpx.delete(
+        f"{REST}/saved_cards", headers=HEADERS,
+        params={"id": f"eq.{card_db_id}", "user_id": f"eq.{user_id}"}
+    )
+    return {"success": r.status_code in (200, 204)}

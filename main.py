@@ -60,6 +60,28 @@ def delete_account():
     result = auth._delete_account(data["user_id"])
     return jsonify(result), 200 if result.get("success") else 500
 
+# ── SAVED CARDS ───────────────────────────────────────────────────
+@app.get("/auth/cards/<user_id>")
+def get_saved_cards(user_id):
+    return jsonify(auth._load_cards(user_id))
+
+@app.post("/auth/cards")
+def save_card():
+    data = request.json
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"success": False, "error": "user_id required"}), 400
+    return jsonify(auth._save_card(user_id, data))
+
+@app.delete("/auth/cards")
+def delete_card():
+    data = request.json
+    user_id = data.get("user_id")
+    card_db_id = data.get("card_db_id")
+    if not user_id or not card_db_id:
+        return jsonify({"success": False, "error": "user_id and card_db_id required"}), 400
+    return jsonify(auth._delete_card(user_id, card_db_id))
+
 # ----- UPLOAD ENDPOINT -----
 @app.post("/api/upload")
 def upload_file():
@@ -179,7 +201,8 @@ def ask_ai():
     if not message:
         return jsonify({"error": "Empty message"}), 400
         
-    result = generate_chat_response(transactions, history, message, currency)
+    profile = data.get("profile", None)
+    result = generate_chat_response(transactions, history, message, currency, profile)
     if "error" in result:
         return jsonify(result), 500
     return jsonify(result)
