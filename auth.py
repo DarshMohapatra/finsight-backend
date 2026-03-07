@@ -123,31 +123,32 @@ def _load_statements(user_id):
     all_records = []
     limit = 1000
     offset = 0
-    
+
     while True:
         r = httpx.get(
             f"{REST}/transactions", headers=HEADERS,
             params={
-                "user_id": f"eq.{user_id}", 
-                "select": "metadata", 
-                "limit": limit, 
+                "user_id": f"eq.{user_id}",
+                "type": "neq.saved_card",
+                "select": "metadata",
+                "limit": limit,
                 "offset": offset
             }
         )
         if r.status_code != 200:
             print(f"[load_statements] Supabase error {r.status_code}: {r.text}")
             return {"success": False, "error": f"Could not fetch statements: {r.text}"}
-        
+
         data = r.json()
         batch = [row["metadata"] for row in data if row.get("metadata")]
         all_records.extend(batch)
-        
+
         # If we received fewer than 1000 rows, it means we've reached the end
         if len(data) < limit:
             break
-            
+
         offset += limit
-        
+
     return {"success": True, "records": all_records}
 
 
@@ -158,33 +159,48 @@ def _delete_account(user_id):
     return {"success": r.status_code in (200, 204)}
 
 
-# ── SAVED CARDS ──────────────────────────────────────────────────
+# ── SAVED CARDS (stored in transactions table with type=saved_card) ──
 def _save_card(user_id, card_data):
     payload = {
         "user_id":     user_id,
-        "card_id":     card_data.get("card_id", ""),
-        "card_number": card_data.get("card_number", ""),
-        "nickname":    card_data.get("nickname", ""),
+        "type":        "saved_card",
+        "date":        "",
+        "description": card_data.get("card_id", ""),
+        "amount":      0,
+        "category":    "",
+        "currency":    "",
+        "metadata":    {
+            "card_id":     card_data.get("card_id", ""),
+            "card_number": card_data.get("card_number", ""),
+            "nickname":    card_data.get("nickname", ""),
+        }
     }
-    r = httpx.post(f"{REST}/saved_cards", headers=HEADERS, json=payload)
+    r = httpx.post(f"{REST}/transactions", headers=HEADERS, json=payload)
     if r.status_code in (200, 201):
-        return {"success": True, "card": r.json()[0]}
+        row = r.json()[0]
+        return {"success": True, "card": {**row["metadata"], "id": row["id"]}}
     return {"success": False, "error": f"Failed to save card: {r.text}"}
 
 
 def _load_cards(user_id):
     r = httpx.get(
-        f"{REST}/saved_cards", headers=HEADERS,
-        params={"user_id": f"eq.{user_id}", "select": "*", "order": "created_at.desc"}
+        f"{REST}/transactions", headers=HEADERS,
+        params={
+            "user_id": f"eq.{user_id}",
+            "type": "eq.saved_card",
+            "select": "id,metadata",
+            "order": "id.desc"
+        }
     )
     if r.status_code == 200:
-        return {"success": True, "cards": r.json()}
+        cards = [{**row["metadata"], "id": row["id"]} for row in r.json() if row.get("metadata")]
+        return {"success": True, "cards": cards}
     return {"success": True, "cards": []}
 
 
 def _delete_card(user_id, card_db_id):
     r = httpx.delete(
-        f"{REST}/saved_cards", headers=HEADERS,
-        params={"id": f"eq.{card_db_id}", "user_id": f"eq.{user_id}"}
+        f"{REST}/transactions", headers=HEADERS,
+        params={"id": f"eq.{card_db_id}", "user_id": f"eq.{user_id}", "type": "eq.saved_card"}
     )
     return {"success": r.status_code in (200, 204)}
