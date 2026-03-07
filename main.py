@@ -91,6 +91,70 @@ def upload_file():
             # Deleting the file from the server immediately after processing for privacy
             if os.path.exists(filepath):
                 os.remove(filepath)
+# ── GMAIL ─────────────────────────────────────────────────────────
+@app.post("/api/gmail/validate")
+def gmail_validate():
+    """
+    Validate Google OAuth token and confirm gmail.readonly scope is granted.
+    Body: { access_token }
+    Returns: { success, email, scopes }
+    """
+    data  = request.json
+    token = data.get("access_token", "")
+    if not token:
+        return jsonify({"success": False, "error": "No token provided"}), 400
+    result = gmail_auth.validate_token(token)
+    return jsonify(result), 200 if result.get("success") else 401
+
+
+@app.post("/api/gmail/scan")
+def gmail_scan():
+    """
+    Scan Gmail inbox for bank statement emails with PDF attachments.
+    Body: { access_token }
+    Returns: { success, emails: [{id, subject, from, bank_name, date, attachments}], count }
+    """
+    data  = request.json
+    token = data.get("access_token", "")
+    if not token:
+        return jsonify({"success": False, "error": "No token provided"}), 400
+    result = gmail_scanner.scan_for_statements(token)
+    return jsonify(result), 200 if result.get("success") else 500
+
+
+@app.post("/api/gmail/fetch")
+def gmail_fetch():
+    """
+    Download a Gmail PDF attachment, analyze it, return transactions.
+    Body: { access_token, message_id, attachment_id, filename, password? }
+    Returns: same shape as /api/upload → { success, transactions, summary, currency }
+    """
+    data          = request.json
+    token         = data.get("access_token", "")
+    message_id    = data.get("message_id", "")
+    attachment_id = data.get("attachment_id", "")
+    filename      = data.get("filename", "statement.pdf")
+    password      = data.get("password", "")
+
+    if not all([token, message_id, attachment_id]):
+        return jsonify({"success": False, "error": "Missing required fields"}), 400
+
+    result = gmail_fetcher.fetch_and_process(
+        token, message_id, attachment_id, filename, password,
+        analyzer=analyzer,
+    )
+    return jsonify(result), 200 if result.get("success") else 400
+
+
+@app.post("/api/gmail/revoke")
+def gmail_revoke():
+    """Revoke the OAuth token — called when user closes the dialog."""
+    data  = request.json
+    token = data.get("access_token", "")
+    if token:
+        gmail_auth.revoke_token(token)
+    return jsonify({"success": True})
+
 
 # ----- FORECAST ENDPOINT -----
 @app.post("/api/forecast")
