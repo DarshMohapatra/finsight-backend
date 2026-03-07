@@ -68,16 +68,21 @@ def _headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def scan_for_statements(access_token, max_results=40):
+def scan_for_statements(access_token, max_results=40, months=6):
     """
     Search Gmail for emails from known banks that have PDF attachments.
     Returns { success, emails: [...], count }
     """
+    from datetime import datetime, timedelta
+
     h = _headers(access_token)
+
+    # Date filter based on months parameter
+    after_date = (datetime.now() - timedelta(days=months * 30)).strftime("%Y/%m/%d")
 
     # Building Gmail search query
     sender_q = " OR ".join([f"from:{s}" for s in BANK_SENDERS[:15]])
-    query    = f"({sender_q}) has:attachment filename:pdf"
+    query    = f"({sender_q}) has:attachment filename:pdf after:{after_date}"
 
     r = httpx.get(
         f"{GMAIL_API}/users/me/messages",

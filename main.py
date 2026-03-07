@@ -143,7 +143,8 @@ def gmail_scan():
     token = data.get("access_token", "")
     if not token:
         return jsonify({"success": False, "error": "No token provided"}), 400
-    result = gmail_scanner.scan_for_statements(token)
+    months = data.get("months", 6)
+    result = gmail_scanner.scan_for_statements(token, months=months)
     return jsonify(result), 200 if result.get("success") else 500
 
 
