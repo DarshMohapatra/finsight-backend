@@ -76,18 +76,19 @@ def generate_forecast(transactions_dict):
     lower = [max(p - std_y * (0.5 + 0.1 * i), p * 0.1) for i, p in enumerate(predicted)]
     upper = [p + std_y * (0.5 + 0.1 * i) for i, p in enumerate(predicted)]
     
-    # --- THIS PART FIXES THE BROKEN GRAPH LINE ---
+    # --- Limit historical chart data to last 6 months ---
     chart_data = []
-    for i in range(len(ms)):
+    ms_chart = ms.tail(6).reset_index(drop=True)
+    for i in range(len(ms_chart)):
         chart_data.append({
-            "month": ms["ds"].iloc[i].strftime("%b"),
-            "actual": float(ms["y"].iloc[i]),
+            "month": ms_chart["ds"].iloc[i].strftime("%b"),
+            "actual": float(ms_chart["y"].iloc[i]),
             "predicted": None,
             "range": None
         })
         
-    if len(ms) > 0:
-        last_val = float(ms["y"].iloc[-1])
+    if len(ms_chart) > 0:
+        last_val = float(ms_chart["y"].iloc[-1])
         # Force the last historical point to ALSO act as the first predicted point
         chart_data[-1]["predicted"] = last_val
         chart_data[-1]["range"] = [last_val, last_val]

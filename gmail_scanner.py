@@ -91,23 +91,31 @@ def scan_for_statements(access_token, max_results=40, months=6):
 
     seen_ids = set()
     all_refs = []
+    debug_info = []
 
     for query in [query1, query2]:
-        r = httpx.get(
-            f"{GMAIL_API}/users/me/messages",
-            headers=h,
-            params={"q": query, "maxResults": max_results},
-            timeout=20,
-        )
-        if r.status_code != 200:
-            continue
-        for ref in r.json().get("messages", []):
-            if ref["id"] not in seen_ids:
-                seen_ids.add(ref["id"])
-                all_refs.append(ref)
+        try:
+            r = httpx.get(
+                f"{GMAIL_API}/users/me/messages",
+                headers=h,
+                params={"q": query, "maxResults": max_results},
+                timeout=20,
+            )
+            debug_info.append({"query": query[:80], "status": r.status_code})
+            if r.status_code != 200:
+                debug_info[-1]["error"] = r.text[:200]
+                continue
+            msgs = r.json().get("messages", [])
+            debug_info[-1]["found"] = len(msgs)
+            for ref in msgs:
+                if ref["id"] not in seen_ids:
+                    seen_ids.add(ref["id"])
+                    all_refs.append(ref)
+        except Exception as e:
+            debug_info.append({"query": query[:80], "exception": str(e)})
 
     if not all_refs:
-        return {"success": True, "emails": [], "count": 0}
+        return {"success": True, "emails": [], "count": 0, "debug": debug_info}
 
     # Fetch metadata for up to 30 messages
     emails = []
