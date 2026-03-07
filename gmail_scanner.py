@@ -70,44 +70,55 @@ def _headers(token):
 
 def scan_for_statements(access_token, max_results=40, months=6):
     """
-    Search Gmail for emails from known banks that have PDF attachments.
-    Returns { success, emails: [...], count }
+    Search Gmail for emails with bank statement PDFs.
+    Two-pass strategy:
+      1) Emails from known bank sender domains with PDF attachments
+      2) Any email with PDF attachments whose filenames look like statements
+    Results are deduplicated by message ID.
     """
     from datetime import datetime, timedelta
 
     h = _headers(access_token)
-
-    # Date filter based on months parameter
     after_date = (datetime.now() - timedelta(days=months * 30)).strftime("%Y/%m/%d")
 
-    # Building Gmail search query
+    # -- Pass 1: known bank senders --
     sender_q = " OR ".join([f"from:{s}" for s in BANK_SENDERS[:15]])
-    query    = f"({sender_q}) has:attachment filename:pdf after:{after_date}"
+    query1   = f"({sender_q}) has:attachment filename:pdf after:{after_date}"
 
-    r = httpx.get(
-        f"{GMAIL_API}/users/me/messages",
-        headers=h,
-        params={"q": query, "maxResults": max_results},
-        timeout=20,
-    )
+    # -- Pass 2: any email with statement-like PDF filenames --
+    name_keywords = ["statement", "account", "txn", "transaction", "e-statement",
+                     "estatement", "bankstatement", "credit_card", "creditcard"]
+    name_q  = " OR ".join([f"filename:{kw}" for kw in name_keywords])
+    query2  = f"({name_q}) has:attachment filename:pdf after:{after_date}"
 
-    if r.status_code != 200:
-        return {"success": False, "error": f"Gmail API error {r.status_code}: {r.text}"}
+    seen_ids = set()
+    all_refs = []
 
-    message_refs = r.json().get("messages", [])
-    if not message_refs:
+    for query in [query1, query2]:
+        r = httpx.get(
+            f"{GMAIL_API}/users/me/messages",
+            headers=h,
+            params={"q": query, "maxResults": max_results},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            continue
+        for ref in r.json().get("messages", []):
+            if ref["id"] not in seen_ids:
+                seen_ids.add(ref["id"])
+                all_refs.append(ref)
+
+    if not all_refs:
         return {"success": True, "emails": [], "count": 0}
 
     # Fetch metadata for up to 25 messages
     emails = []
-    for ref in message_refs[:25]:
+    for ref in all_refs[:25]:
         meta = _get_message_meta(ref["id"], h)
         if meta:
             emails.append(meta)
 
-    # Sort newest first
     emails.sort(key=lambda e: e.get("date", ""), reverse=True)
-
     return {"success": True, "emails": emails, "count": len(emails)}
 
 
@@ -136,6 +147,14 @@ def _get_message_meta(message_id, headers):
     sender_raw  = hmap.get("From", "")
     bank_name   = _resolve_bank_name(sender_raw)
 
+    # If sender isn't a known bank, try to detect bank from attachment filenames
+    if bank_name == sender_raw or not any(d in sender_raw.lower() for d in BANK_DISPLAY):
+        for att in attachments:
+            detected = _detect_bank_from_filename(att.get("filename", ""))
+            if detected:
+                bank_name = detected
+                break
+
     return {
         "id":          message_id,
         "subject":     hmap.get("Subject", "(No Subject)"),
@@ -163,6 +182,47 @@ def _walk_parts(part, message_id, result):
 
     for sub in part.get("parts", []):
         _walk_parts(sub, message_id, result)
+
+
+FILENAME_BANK_HINTS = {
+    "hdfc":          "HDFC Bank",
+    "icici":         "ICICI Bank",
+    "sbi":           "SBI",
+    "axis":          "Axis Bank",
+    "kotak":         "Kotak Bank",
+    "indusind":      "IndusInd Bank",
+    "idfc":          "IDFC First Bank",
+    "rbl":           "RBL Bank",
+    "yes bank":      "Yes Bank",
+    "yesbank":       "Yes Bank",
+    "federal":       "Federal Bank",
+    "canara":        "Canara Bank",
+    "pnb":           "PNB",
+    "baroda":        "Bank of Baroda",
+    "citi":          "Citibank",
+    "chase":         "Chase",
+    "bofa":          "Bank of America",
+    "bankofamerica": "Bank of America",
+    "wellsfargo":    "Wells Fargo",
+    "wells fargo":   "Wells Fargo",
+    "barclays":      "Barclays",
+    "lloyds":        "Lloyds Bank",
+    "hsbc":          "HSBC",
+    "natwest":       "NatWest",
+    "td bank":       "TD Bank",
+    "anz":           "ANZ",
+    "commbank":      "Commonwealth Bank",
+    "sc ":           "Standard Chartered",
+}
+
+
+def _detect_bank_from_filename(filename):
+    """Try to detect a bank name from the PDF filename."""
+    lower = filename.lower()
+    for hint, display in FILENAME_BANK_HINTS.items():
+        if hint in lower:
+            return display
+    return None
 
 
 def _resolve_bank_name(from_header):
